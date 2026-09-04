@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 
 app.post('/api/send-all-data', async (req, res) => {
-  const { username, battery, speed, signal, network } = req.body;
+  const { username, battery, speed, signal } = req.body;
   
   if (!username) {
     return res.status(400).json({ error: 'missing username' });
