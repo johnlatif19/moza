@@ -10,34 +10,8 @@ app.use(express.static('.'));
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID = process.env.CHAT_ID;
 
-// إرسال اسم المستخدم
-app.post('/api/send-username', async (req, res) => {
-  const { username } = req.body;
-  
-  if (!username) {
-    return res.status(400).json({ error: 'missing username' });
-  }
-
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CHAT_ID,
-        text: `👤 اسم المستخدم: ${username}`
-      })
-    });
-    
-    const result = await response.json();
-    res.json({ success: true, result });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// إرسال البطارية
 app.post('/api/send-battery', async (req, res) => {
-  const { battery, username } = req.body;
+  const { battery } = req.body;
   
   if (!battery) {
     return res.status(400).json({ error: 'missing battery' });
@@ -49,7 +23,7 @@ app.post('/api/send-battery', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: CHAT_ID,
-        text: `🔋 نسبة البطارية: ${battery}%\n👤 المستخدم: ${username || 'غير معروف'}`
+        text: `🔋 نسبة البطارية: ${battery}%`
       })
     });
     
